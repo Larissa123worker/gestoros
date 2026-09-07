@@ -194,8 +194,53 @@ Deno.serve(async (req) => {
       const { data: subscription } = await db.from("company_subscriptions").select("*").eq("company_id", company.id).maybeSingle();
       let payments: unknown[] = [];
       if (subscription?.asaas_subscription_id) {
-        const result = await listSubscriptionPayments(subscription.asaas_subscription_id);
+        const [asaasSubscription, result] = await Promise.all([
+          getSubscription(subscription.asaas_subscription_id),
+          listSubscriptionPayments(subscription.asaas_subscription_id),
+        ]);
         payments = result.data ?? [];
+
+        const paidPayment = result.data?.find((payment) => ["RECEIVED", "CONFIRMED"].includes(String(payment.status)));
+        const syncPayload: Record<string, unknown> = {
+          "updatedAt": new Date().toISOString(),
+        };
+        if (asaasSubscription.nextDueDate) syncPayload.next_billing_at = asaasSubscription.nextDueDate;
+        if (asaasSubscription.value) syncPayload.amount = Number(asaasSubscription.value);
+        if (asaasSubscription.cycle === "MONTHLY" || asaasSubscription.cycle === "YEARLY") syncPayload.cycle = asaasSubscription.cycle;
+        if (asaasSubscription.billingType === "PIX" || asaasSubscription.billingType === "CREDIT_CARD") syncPayload.billing_type = asaasSubscription.billingType;
+        if (paidPayment) {
+          syncPayload.status = "active";
+          syncPayload.trial_ends_at = null;
+        } else if (asaasSubscription.status === "OVERDUE") {
+          syncPayload.status = "past_due";
+        } else if (["INACTIVE", "EXPIRED"].includes(String(asaasSubscription.status))) {
+          syncPayload.status = "canceled";
+        }
+
+        const { data: syncedSubscription, error: syncError } = await db
+          .from("company_subscriptions")
+          .update(syncPayload)
+          .eq("id", subscription.id)
+          .select("*")
+          .single();
+        if (syncError) throw syncError;
+
+        for (const payment of result.data ?? []) {
+          const { error: paymentSyncError } = await db.from("subscription_payments").upsert({
+            id: `asaas-${payment.id}`,
+            subscription_id: subscription.id,
+            asaas_payment_id: payment.id,
+            billing_type: payment.billingType,
+            description: payment.description || "Assinatura Gestor OS",
+            amount: payment.value,
+            status: ["RECEIVED", "CONFIRMED"].includes(String(payment.status)) ? "paid" : String(payment.status).toLowerCase() === "OVERDUE" ? "overdue" : "pending",
+            due_at: payment.dueDate || null,
+            paid_at: payment.paymentDate || null,
+          }, { onConflict: "asaas_payment_id" });
+          if (paymentSyncError) throw paymentSyncError;
+        }
+
+        return json({ company, subscription: syncedSubscription, payments });
       }
       return json({ company, subscription, payments });
     }
