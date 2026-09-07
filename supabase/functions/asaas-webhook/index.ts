@@ -66,9 +66,7 @@ Deno.serve(async (req) => {
     asaasSub = await fetchAsaasSubscription(asaasSubscriptionId).catch(() => null);
   }
 
-  const updatePayload: Record<string, unknown> = {
-    updated_at: new Date().toISOString(),
-  };
+  const updatePayload: Record<string, unknown> = {};
   if (mappedStatus) updatePayload.status = mappedStatus;
   if (payload.subscription?.nextDueDate) updatePayload.next_billing_at = payload.subscription.nextDueDate;
   else if (asaasSub?.nextDueDate) updatePayload.next_billing_at = asaasSub.nextDueDate;
