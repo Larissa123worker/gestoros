@@ -134,8 +134,7 @@ export default function AccountScreen() {
   }, [state.companyId]);
 
   useEffect(() => {
-  useEffect(() => {
-    const currentStatus = liveAccount?.subscription?.status ?? subscription?.status;
+    const currentStatus = liveAccount?.subscription?.status ?? state.subscription?.status;
     if (!showPixQr && currentStatus !== "pending") return;
     // Captura o status inicial UMA VEZ via ref para evitar stale closure
     if (!pixInitialStatusRef.current) {
@@ -161,7 +160,7 @@ export default function AccountScreen() {
     }, 3000);
     return () => clearInterval(interval);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showPixQr, liveAccount?.subscription?.status, subscription?.status]);
+  }, [showPixQr, liveAccount?.subscription?.status, state.subscription?.status]);
 
   function openEdit() {
     if (!company) return;
