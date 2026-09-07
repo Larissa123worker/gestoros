@@ -305,6 +305,8 @@ export default function AccountScreen() {
         console.log("CREDIT_CARD Frontend Payload:", JSON.stringify({ ...(input as any).card, number: "***", ccv: "***" }));
       }
       const result = await subscribe(input as Parameters<typeof subscribe>[0]);
+      const persistedAccount = await getBillingAccount();
+      const persistedSubscription = persistedAccount.subscription ?? result.subscription;
       if (billingType === "CREDIT_CARD") {
         console.log("CREDIT_CARD Frontend Response:", JSON.stringify(result));
       }
@@ -320,24 +322,24 @@ export default function AccountScreen() {
           setBillingMessage("Assinatura criada. A cobrança PIX estará disponível em breve no seu painel.");
         }
       } else {
-        const status = (result as any)?.subscription?.status?.toLowerCase();
+        const status = (persistedSubscription as any)?.status?.toLowerCase();
         setCheckoutOpen(false);
         if (status === "active" || status === "paid") {
           setPaymentConfirmed(true);
           setBillingMessage("Pagamento confirmado! Seu plano já está ativo.");
-          store.setSubscription(result.subscription as CompanySubscription);
+          store.setSubscription(persistedSubscription as CompanySubscription);
         } else {
           setBillingMessage("Assinatura criada. O pagamento está sendo processado pelo Asaas.");
         }
       }
 
-      setLiveAccount((current: any) => ({ ...(current || {}), subscription: result.subscription }));
+      setLiveAccount(persistedAccount);
       const planObj = plans.find((p) => p.id === selectedPlanId);
       setUpgradeBanner({
-        planName: (result as any)?.subscription?.plan ?? planObj?.name ?? "",
-        amount: Number((result as any)?.subscription?.amount ?? (billingCycle === "monthly" ? planObj?.monthly_amount : planObj?.annual_amount) ?? 0),
-        cycle: ((result as any)?.subscription?.cycle ?? (billingCycle === "annual" ? "YEARLY" : "MONTHLY")) as "MONTHLY" | "YEARLY",
-        nextBillingAt: (result as any)?.subscription?.next_billing_at ?? null,
+        planName: (persistedSubscription as any)?.plan ?? planObj?.name ?? "",
+        amount: Number((persistedSubscription as any)?.amount ?? (billingCycle === "monthly" ? planObj?.monthly_amount : planObj?.annual_amount) ?? 0),
+        cycle: ((persistedSubscription as any)?.cycle ?? (billingCycle === "annual" ? "YEARLY" : "MONTHLY")) as "MONTHLY" | "YEARLY",
+        nextBillingAt: (persistedSubscription as any)?.next_billing_at ?? null,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Não foi possível contratar o plano.";

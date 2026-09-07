@@ -34,14 +34,23 @@ Deno.serve(async (req) => {
   if (!payload?.id || !payload?.event) return json({ error: "Evento inválido." }, 400);
 
   const db = adminClient();
-  const { error: eventError } = await db.from("asaas_webhook_events").insert({
-    id: String(payload.id),
-    event: String(payload.event),
-    payload,
-    processed_at: new Date().toISOString(),
-  });
-  if (eventError && String(eventError.code) === "23505") return json({ received: true, duplicate: true });
-  if (eventError) return json({ error: "Falha ao persistir evento." }, 500);
+  const eventId = String(payload.id);
+  const { data: existingEvent, error: existingEventError } = await db
+    .from("asaas_webhook_events")
+    .select("processed_at")
+    .eq("id", eventId)
+    .maybeSingle();
+  if (existingEventError) return json({ error: "Falha ao consultar evento." }, 500);
+  if (existingEvent?.processed_at) return json({ received: true, duplicate: true });
+  if (!existingEvent) {
+    const { error: eventError } = await db.from("asaas_webhook_events").insert({
+      id: eventId,
+      event: String(payload.event),
+      payload,
+      processed_at: null,
+    });
+    if (eventError && String(eventError.code) !== "23505") return json({ error: "Falha ao persistir evento." }, 500);
+  }
 
   const payment = payload.payment;
   const asaasSubscriptionId = payment?.subscription || payload.subscription?.id;
@@ -81,10 +90,17 @@ Deno.serve(async (req) => {
     updatePayload.trial_ends_at = null;
   }
 
-  await db.from("company_subscriptions").update(updatePayload).eq("id", subscription.id);
+  const { error: subscriptionError } = await db
+    .from("company_subscriptions")
+    .update({ ...updatePayload, "updatedAt": new Date().toISOString() })
+    .eq("id", subscription.id);
+  if (subscriptionError) {
+    console.error("Falha ao atualizar assinatura local:", subscriptionError);
+    return json({ error: "Falha ao atualizar assinatura local." }, 500);
+  }
 
   if (payment?.id) {
-    await db.from("subscription_payments").upsert({
+    const { error: paymentError } = await db.from("subscription_payments").upsert({
       id: `asaas-${payment.id}`,
       subscription_id: subscription.id,
       asaas_payment_id: payment.id,
@@ -95,7 +111,17 @@ Deno.serve(async (req) => {
       due_at: payment.dueDate || null,
       paid_at: payment.paymentDate || null,
     }, { onConflict: "asaas_payment_id" });
+    if (paymentError) {
+      console.error("Falha ao atualizar pagamento local:", paymentError);
+      return json({ error: "Falha ao atualizar pagamento local." }, 500);
+    }
   }
+
+  const { error: processedEventError } = await db
+    .from("asaas_webhook_events")
+    .update({ processed_at: new Date().toISOString() })
+    .eq("id", eventId);
+  if (processedEventError) return json({ error: "Falha ao finalizar evento." }, 500);
 
   return json({ received: true });
 });
